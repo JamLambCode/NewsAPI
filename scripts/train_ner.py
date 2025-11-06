@@ -5,8 +5,9 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Dict, List, Optional
 
+from datasets import DatasetDict, load_dataset
 
 # ---------------------------------------------------------------------------
 # Section 1: CLI arguments & config
@@ -151,6 +152,91 @@ def parse_args() -> TrainingConfig:
     )
 
 
+# ---------------------------------------------------------------------------
+# Section 2: Label schema & dataset loading
+# ---------------------------------------------------------------------------
+
+
+TARGET_ENTITY_TYPES = ("PER", "ORG", "LOC")
+
+
+@dataclass(frozen=True)
+class LabelSchema:
+    labels: List[str]
+    label2id: Dict[str, int]
+    id2label: Dict[int, str]
+
+    @property
+    def num_labels(self) -> int:
+        return len(self.labels)
+
+
+def build_label_schema() -> LabelSchema:
+    """Define BIO label schema for PER/ORG/LOC tagging."""
+
+    labels = ["O"]
+    for entity in TARGET_ENTITY_TYPES:
+        labels.append(f"B-{entity}")
+        labels.append(f"I-{entity}")
+
+    label2id = {label: idx for idx, label in enumerate(labels)}
+    id2label = {idx: label for label, idx in label2id.items()}
+    return LabelSchema(labels=labels, label2id=label2id, id2label=id2label)
+
+
+def _normalize_wikiann_tag(tag: str, schema: LabelSchema) -> str:
+    """Normalize WikiANN tag names to match our schema (e.g., B-per -> B-PER)."""
+
+    tag = tag.upper()
+    if tag in schema.label2id:
+        return tag
+
+    if "-" not in tag:
+        return "O"
+
+    prefix, entity = tag.split("-", maxsplit=1)
+    entity = entity[:3]  # handle variants like PERSON -> PER
+    normalized = f"{prefix}-{entity}"
+    return normalized if normalized in schema.label2id else "O"
+
+
+def load_wikiann_dataset(config: TrainingConfig, schema: LabelSchema) -> DatasetDict:
+    """Load WikiANN dataset and map ner_tags to our label schema."""
+
+    dataset = load_dataset(config.dataset_name, config.dataset_config)
+    ner_feature = dataset["train"].features["ner_tags"].feature
+    idx_to_name = {idx: name for idx, name in enumerate(ner_feature.names)}
+    idx_to_normalized = {idx: _normalize_wikiann_tag(name, schema) for idx, name in idx_to_name.items()}
+
+    def encode_tags(batch: Dict[str, List]) -> Dict[str, List]:
+        encoded = []
+        for tags in batch["ner_tags"]:
+            encoded.append([schema.label2id[idx_to_normalized[tag]] for tag in tags])
+        batch["labels"] = encoded
+        return batch
+
+    dataset = dataset.map(encode_tags, batched=True, desc="Mapping labels")
+    dataset = dataset.remove_columns([col for col in dataset["train"].column_names if col == "ner_tags"])
+
+    if config.max_train_samples:
+        dataset["train"] = dataset["train"].shuffle(seed=config.seed).select(range(config.max_train_samples))
+    if config.max_eval_samples:
+        if "validation" in dataset:
+            dataset["validation"] = dataset["validation"].shuffle(seed=config.seed).select(range(config.max_eval_samples))
+        if "test" in dataset:
+            dataset["test"] = dataset["test"].shuffle(seed=config.seed).select(range(config.max_eval_samples))
+
+    if "validation" not in dataset or "test" not in dataset:
+        split = dataset["train"].train_test_split(test_size=0.2, seed=config.seed)
+        dataset["train"] = split["train"]
+        dataset["validation"] = split["test"]
+        split = dataset["validation"].train_test_split(test_size=0.5, seed=config.seed)
+        dataset["validation"] = split["train"]
+        dataset["test"] = split["test"]
+
+    return dataset
+
+
 def main() -> None:
     """Entrypoint for the training script."""
 
@@ -158,6 +244,14 @@ def main() -> None:
     print("Training configuration:")
     for field_name, value in config.__dict__.items():
         print(f"  {field_name}: {value}")
+
+    schema = build_label_schema()
+    print(f"Label schema: {schema.label2id}")
+
+    dataset = load_wikiann_dataset(config, schema)
+    for split in ("train", "validation", "test"):
+        if split in dataset:
+            print(f"{split.title()} split size: {len(dataset[split])}")
 
     # TODO: implement remaining sections
     raise SystemExit("Training pipeline not yet implemented.")
