@@ -5,9 +5,10 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence
 
 from datasets import DatasetDict, load_dataset
+from transformers import AutoTokenizer
 
 # ---------------------------------------------------------------------------
 # Section 1: CLI arguments & config
@@ -43,6 +44,7 @@ class TrainingConfig:
     hub_model_id: Optional[str] = None
     notes: str = ""
     extra_tags: list[str] = field(default_factory=list)
+    label_all_tokens: bool = False
 
 
 def parse_args() -> TrainingConfig:
@@ -126,6 +128,11 @@ def parse_args() -> TrainingConfig:
         default=None,
         help="Optional list of tags/labels for experiment tracking.",
     )
+    parser.add_argument(
+        "--label-all-tokens",
+        action="store_true",
+        help="If set, propagate labels to all subword tokens instead of masking continuation pieces.",
+    )
 
     args = parser.parse_args()
     return TrainingConfig(
@@ -149,6 +156,7 @@ def parse_args() -> TrainingConfig:
         hub_model_id=args.hub_model_id,
         notes=args.notes,
         extra_tags=args.extra_tags or [],
+        label_all_tokens=args.label_all_tokens,
     )
 
 
@@ -237,6 +245,54 @@ def load_wikiann_dataset(config: TrainingConfig, schema: LabelSchema) -> Dataset
     return dataset
 
 
+# ---------------------------------------------------------------------------
+# Section 3: Tokenization & label alignment
+# ---------------------------------------------------------------------------
+
+
+def tokenize_and_align_labels(
+    tokenizer: AutoTokenizer,
+    dataset: DatasetDict,
+    schema: LabelSchema,
+    *,
+    label_all_tokens: bool = False,
+) -> DatasetDict:
+    """Tokenize the dataset and align word-level labels to tokens."""
+
+    def _tokenize(batch: Dict[str, Sequence[Sequence[str]]]) -> Dict[str, List]:
+        tokenized = tokenizer(
+            batch["tokens"],
+            truncation=True,
+            is_split_into_words=True,
+        )
+
+        labels = []
+        for idx, label_sequence in enumerate(batch["labels"]):
+            word_ids = tokenized.word_ids(batch_index=idx)
+            label_ids: List[int] = []
+            previous_word_idx = None
+            for word_idx in word_ids:
+                if word_idx is None:
+                    label_ids.append(-100)
+                elif word_idx != previous_word_idx:
+                    label_ids.append(label_sequence[word_idx])
+                else:
+                    label_ids.append(label_sequence[word_idx] if label_all_tokens else -100)
+                previous_word_idx = word_idx
+            labels.append(label_ids)
+
+        tokenized["labels"] = labels
+        return tokenized
+
+    tokenized_dataset = dataset.map(
+        _tokenize,
+        batched=True,
+        remove_columns=["tokens"],
+        desc="Tokenizing and aligning labels",
+    )
+    return tokenized_dataset
+
+
 def main() -> None:
     """Entrypoint for the training script."""
 
@@ -252,6 +308,20 @@ def main() -> None:
     for split in ("train", "validation", "test"):
         if split in dataset:
             print(f"{split.title()} split size: {len(dataset[split])}")
+
+    tokenizer = AutoTokenizer.from_pretrained(config.model_name)
+    tokenized_dataset = tokenize_and_align_labels(
+        tokenizer,
+        dataset,
+        schema,
+        label_all_tokens=config.label_all_tokens,
+    )
+
+    # show a sample for sanity
+    sample = tokenized_dataset["train"][0]
+    print("Sample tokenized input keys:", list(sample.keys()))
+    print("Sample input ids length:", len(sample["input_ids"]))
+    print("Sample labels (first 20):", sample["labels"][:20])
 
     # TODO: implement remaining sections
     raise SystemExit("Training pipeline not yet implemented.")
