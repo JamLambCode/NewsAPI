@@ -3,12 +3,23 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
+import json
+
 from datasets import DatasetDict, load_dataset
-from transformers import AutoTokenizer
+from transformers import (
+    AutoModelForTokenClassification,
+    AutoTokenizer,
+    DataCollatorForTokenClassification,
+    Trainer,
+    TrainingArguments,
+    set_seed,
+)
+import evaluate
+import numpy as np
 
 # ---------------------------------------------------------------------------
 # Section 1: CLI arguments & config
@@ -293,6 +304,55 @@ def tokenize_and_align_labels(
     return tokenized_dataset
 
 
+def prepare_for_trainer(tokenized_dataset: DatasetDict) -> DatasetDict:
+    """Remove non-tensor columns and set the format for PyTorch training."""
+
+    keep_columns = {"input_ids", "attention_mask", "labels", "token_type_ids"}
+    updated_splits: Dict[str, List] = {}
+    for split, split_ds in tokenized_dataset.items():
+        columns_to_remove = [col for col in split_ds.column_names if col not in keep_columns]
+        updated_split = split_ds.remove_columns(columns_to_remove)
+        updated_splits[split] = updated_split.with_format("torch")
+    return DatasetDict(updated_splits)
+
+
+def build_compute_metrics(schema: LabelSchema):
+    seqeval = evaluate.load("seqeval")
+
+    def compute_metrics(predictions_and_labels):
+        predictions, labels = predictions_and_labels
+        predictions = np.argmax(predictions, axis=-1)
+
+        true_predictions = []
+        true_labels = []
+        for prediction, label in zip(predictions, labels):
+            current_preds = []
+            current_labels = []
+            for pred_id, label_id in zip(prediction, label):
+                if label_id == -100:
+                    continue
+                current_preds.append(schema.id2label[pred_id])
+                current_labels.append(schema.id2label[label_id])
+            true_predictions.append(current_preds)
+            true_labels.append(current_labels)
+
+        results = seqeval.compute(predictions=true_predictions, references=true_labels)
+        summary = {
+            "precision": results.get("overall_precision", 0.0),
+            "recall": results.get("overall_recall", 0.0),
+            "f1": results.get("overall_f1", 0.0),
+            "accuracy": results.get("overall_accuracy", 0.0),
+        }
+
+        # Include per-label F1 scores for additional visibility
+        for label_name, metrics in results.items():
+            if isinstance(metrics, dict) and "f1" in metrics:
+                summary[f"f1_{label_name}"] = metrics["f1"]
+        return summary
+
+    return compute_metrics
+
+
 def main() -> None:
     """Entrypoint for the training script."""
 
@@ -323,8 +383,91 @@ def main() -> None:
     print("Sample input ids length:", len(sample["input_ids"]))
     print("Sample labels (first 20):", sample["labels"][:20])
 
-    # TODO: implement remaining sections
-    raise SystemExit("Training pipeline not yet implemented.")
+    tokenized_dataset = prepare_for_trainer(tokenized_dataset)
+    set_seed(config.seed)
+    config.output_dir.mkdir(parents=True, exist_ok=True)
+
+    model = AutoModelForTokenClassification.from_pretrained(
+        config.model_name,
+        num_labels=schema.num_labels,
+        id2label=schema.id2label,
+        label2id=schema.label2id,
+    )
+
+    compute_metrics = build_compute_metrics(schema)
+    data_collator = DataCollatorForTokenClassification(tokenizer)
+
+    evaluation_strategy_value = "steps" if config.eval_steps and config.eval_steps > 0 else "epoch"
+    save_strategy_value = "steps" if config.save_steps and config.save_steps > 0 else evaluation_strategy_value
+    eval_steps = config.eval_steps if evaluation_strategy_value == "steps" else None
+    save_steps = config.save_steps if save_strategy_value == "steps" else None
+
+    training_arg_kwargs = dict(
+        output_dir=str(config.output_dir),
+        num_train_epochs=config.epochs,
+        per_device_train_batch_size=config.batch_size,
+        per_device_eval_batch_size=config.batch_size,
+        learning_rate=config.learning_rate,
+        weight_decay=config.weight_decay,
+        warmup_ratio=config.warmup_ratio,
+        logging_steps=config.logging_steps,
+        eval_strategy=evaluation_strategy_value,
+        save_strategy=save_strategy_value,
+        load_best_model_at_end=True,
+        metric_for_best_model="f1",
+        greater_is_better=True,
+        seed=config.seed,
+        push_to_hub=config.push_to_hub,
+        hub_model_id=config.hub_model_id,
+    )
+    if eval_steps is not None:
+        training_arg_kwargs["eval_steps"] = eval_steps
+    if save_steps is not None:
+        training_arg_kwargs["save_steps"] = save_steps
+
+    training_args = TrainingArguments(**training_arg_kwargs)
+
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        train_dataset=tokenized_dataset["train"],
+        eval_dataset=tokenized_dataset["validation"],
+        tokenizer=tokenizer,
+        data_collator=data_collator,
+        compute_metrics=compute_metrics,
+    )
+
+    train_result = trainer.train(resume_from_checkpoint=config.resume_from_checkpoint)
+    trainer.save_model()
+    tokenizer.save_pretrained(config.output_dir)
+    trainer.save_state()
+
+    trainer.log_metrics("train", train_result.metrics)
+    trainer.save_metrics("train", train_result.metrics)
+
+    eval_metrics = trainer.evaluate()
+    trainer.log_metrics("eval", eval_metrics)
+    trainer.save_metrics("eval", eval_metrics)
+
+    test_metrics = None
+    if "test" in tokenized_dataset:
+        test_metrics = trainer.evaluate(tokenized_dataset["test"], metric_key_prefix="test")
+        trainer.log_metrics("test", test_metrics)
+        trainer.save_metrics("test", test_metrics)
+
+    metadata = asdict(config)
+    if test_metrics:
+        metadata["test_metrics"] = test_metrics
+    with open(config.output_dir / "training_config.json", "w", encoding="utf-8") as cfg_file:
+        json.dump(metadata, cfg_file, indent=2, default=str)
+
+    if config.push_to_hub:
+        trainer.push_to_hub(
+            commit_message="Add fine-tuned NuNER WikiANN-FR model",
+            tags=config.extra_tags if config.extra_tags else None,
+        )
+
+    print("Training complete. Artifacts saved to", config.output_dir)
 
 
 if __name__ == "__main__":
