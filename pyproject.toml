@@ -1,0 +1,53 @@
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "holocron-news-intel"
+version = "0.1.0"
+description = "News intelligence API blending deterministic NLP with controlled LLM reasoning."
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "Holocron", email = "dev@holocron.local"}
+]
+dependencies = [
+    "fastapi~=0.115",
+    "uvicorn[standard]~=0.32",
+    "sqlalchemy~=2.0",
+    "aiosqlite~=0.20",
+    "psycopg[binary]~=3.2",
+    "python-dotenv~=1.0",
+    "pydantic~=2.9",
+    "pydantic-settings~=2.5",
+    "feedparser~=6.0",
+    "httpx~=0.27",
+    "apscheduler~=3.10",
+    "transformers~=4.45",
+    "torch~=2.3",
+    "sentencepiece~=0.2",
+    "dateparser~=1.2",
+    "ollama~=0.2",
+    "openai~=1.54",
+    "pyyaml~=6.0"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest~=8.3",
+    "pytest-asyncio~=0.24",
+    "ruff~=0.7"
+]
+
+[tool.ruff]
+line-length = 100
+select = [
+    "E",
+    "F",
+    "I",
+    "UP",
+    "B"
+]
+
+

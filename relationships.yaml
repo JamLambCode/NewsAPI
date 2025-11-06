@@ -1,0 +1,23 @@
+relationships:
+  - name: works_for
+    source_type: PERSON
+    target_type: ORGANIZATION
+    description: Person is employed by or represents an organization.
+  - name: met_with
+    source_type: PERSON
+    target_type: PERSON
+    description: Two people met or held talks.
+  - name: located_in
+    source_type: ORGANIZATION
+    target_type: LOCATION
+    description: Organization is headquartered or based in a location.
+  - name: announced
+    source_type: ORGANIZATION
+    target_type: EVENT
+    description: Organization announced an event or action.
+  - name: criticized
+    source_type: PERSON
+    target_type: PERSON
+    description: Person criticized another individual.
+
+
