@@ -4,7 +4,8 @@ Holocron ingests French news headlines, extracts entities through deterministic 
 
 ## Features
 
-- Deterministic entity extraction via Hugging Face NuNER
+- Deterministic entity extraction via a fine-tuned NuNER model (PER/ORG/LOC)
+- Heuristic DATE/EVENT detection appended after model output
 - MarianMT translation for bilingual outputs
 - Schema-governed relationship typing with an Ollama-first LLM client
 - Optional OpenAI/OpenRouter fallbacks and heuristic safety nets
@@ -17,10 +18,12 @@ Holocron ingests French news headlines, extracts entities through deterministic 
 
 - Python 3.11+
 - [uv](https://github.com/astral-sh/uv) (or pip/poetry)
+- [Git LFS](https://git-lfs.com/) (to pull the fine-tuned weights)
 - [Ollama](https://ollama.com/download) with `llama3` model pulled
 
 ### Quick Start
 
+0. **Pull LFS artifacts**\n   ```bash\n   git lfs install\n   git lfs pull\n   ```\n
 1. **Install dependencies**
    ```bash
    # Using uv (recommended)
@@ -70,6 +73,38 @@ Holocron ingests French news headlines, extracts entities through deterministic 
    curl http://localhost:8080/relationships
    curl http://localhost:8080/graph
    ```
+
+## Sample Entities & Relationships
+
+Example payload and response for quick smoke testing:
+
+```bash
+http POST :8080/entities \
+  title="Macron rencontre Ursula von der Leyen à Bruxelles le 2 juin 2024" \
+  feed="fr/lemonde" lang="fr" \
+  text="Emmanuel Macron a rencontré Ursula von der Leyen à Bruxelles le 2 juin 2024 pour le Sommet européen de l'énergie. La réunion s'est poursuivie le lendemain 3 juin avec une conférence dédiée au climat."
+```
+
+Sample response excerpt:
+
+```json
+{
+  "entities": [
+    {"type": "PERSON", "text": "Emmanuel Macron"},
+    {"type": "PERSON", "text": "Ursula von der Leyen"},
+    {"type": "LOCATION", "text": "Bruxelles"},
+    {"type": "DATE", "text": "2 juin 2024"},
+    {"type": "EVENT", "text": "Sommet européen de l'énergie"}
+  ],
+  "relationships": [
+    {"rel_type": "met_with", "source": "Emmanuel Macron", "target": "Ursula von der Leyen"},
+    {"rel_type": "located_in", "source": "Sommet européen de l'énergie", "target": "Bruxelles"},
+    {"rel_type": "announced", "source": "Sommet européen de l'énergie", "target": "Sommet européen de l'énergie"}
+  ]
+}
+```
+
+The full response also includes heuristic events and translations for each entity.
 
 ## Configuration
 

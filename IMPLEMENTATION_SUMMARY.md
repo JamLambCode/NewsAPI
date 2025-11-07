@@ -101,6 +101,11 @@ Successfully implemented a production-ready news intelligence API that combines 
 - **Quality**: Focused prompts yield better classification accuracy
 - **Cost**: Critical for OpenAI fallback scenarios
 
+### Training Snapshot
+- Dataset: WikiANN-FR (20k train, 10k val/test)
+- Epochs: 5 (batch 2, gradient accumulation 4, gradient checkpointing)
+- Final metrics: `test_f1 = 0.9074`, `test_precision = 0.9037`, `test_recall = 0.9111`
+- Stored checkpoint: `models/ner_finetuned/` (managed via Git LFS)
 ## File Structure
 
 ```
@@ -177,6 +182,9 @@ curl http://localhost:8080/graph
 **Low Priority:**
 - Prometheus metrics for production observability
 - Model download helper script for first-run optimization
+
+## Repository Hygiene
+- Removed intermediate training checkpoints (`models/ner_finetuned/checkpoint-*`) from history via `git filter-branch`; repo now pushes cleanly with LFS-managed weights.
 
 ## Performance Characteristics
 
