@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
@@ -48,6 +49,11 @@ class TrainingConfig:
     max_eval_samples: Optional[int] = None
     resume_from_checkpoint: Optional[str] = None
     seed: int = 42
+    gradient_accumulation_steps: int = 1
+    gradient_checkpointing: bool = False
+    use_mps_device: Optional[bool] = None
+    no_cuda: bool = False
+    mps_high_watermark_ratio: Optional[float] = None
     model_name: str = DEFAULT_MODEL_NAME
     dataset_name: str = DEFAULT_DATASET_NAME
     dataset_config: str = DEFAULT_DATASET_CONFIG
@@ -97,6 +103,32 @@ def parse_args() -> TrainingConfig:
         help="Path to a checkpoint directory to resume training.",
     )
     parser.add_argument("--seed", type=int, default=TrainingConfig.seed)
+    parser.add_argument(
+        "--gradient-accumulation-steps",
+        type=int,
+        default=TrainingConfig.gradient_accumulation_steps,
+    )
+    parser.add_argument(
+        "--gradient-checkpointing",
+        action="store_true",
+        help="Enable gradient checkpointing to reduce memory usage.",
+    )
+    parser.add_argument(
+        "--no-cuda",
+        action="store_true",
+        help="Force CPU training (disables CUDA/MPS).",
+    )
+    parser.add_argument(
+        "--no-mps",
+        action="store_true",
+        help="Disable MPS usage when available.",
+    )
+    parser.add_argument(
+        "--mps-high-watermark-ratio",
+        type=float,
+        default=None,
+        help="Override PYTORCH_MPS_HIGH_WATERMARK_RATIO (e.g., 0.0 to disable limit).",
+    )
     parser.add_argument(
         "--model-name",
         type=str,
@@ -160,6 +192,11 @@ def parse_args() -> TrainingConfig:
         max_eval_samples=args.max_eval_samples,
         resume_from_checkpoint=args.resume_from_checkpoint,
         seed=args.seed,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
+        gradient_checkpointing=args.gradient_checkpointing,
+        use_mps_device=None if not args.no_mps else False,
+        no_cuda=args.no_cuda,
+        mps_high_watermark_ratio=args.mps_high_watermark_ratio,
         model_name=args.model_name,
         dataset_name=args.dataset_name,
         dataset_config=args.dataset_config,
@@ -357,6 +394,12 @@ def main() -> None:
     """Entrypoint for the training script."""
 
     config = parse_args()
+
+    if config.mps_high_watermark_ratio is not None:
+        os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = str(config.mps_high_watermark_ratio)
+    if config.no_cuda:
+        os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+
     print("Training configuration:")
     for field_name, value in config.__dict__.items():
         print(f"  {field_name}: {value}")
@@ -407,6 +450,7 @@ def main() -> None:
         num_train_epochs=config.epochs,
         per_device_train_batch_size=config.batch_size,
         per_device_eval_batch_size=config.batch_size,
+        gradient_accumulation_steps=config.gradient_accumulation_steps,
         learning_rate=config.learning_rate,
         weight_decay=config.weight_decay,
         warmup_ratio=config.warmup_ratio,
@@ -419,7 +463,11 @@ def main() -> None:
         seed=config.seed,
         push_to_hub=config.push_to_hub,
         hub_model_id=config.hub_model_id,
+        no_cuda=config.no_cuda,
     )
+    if config.use_mps_device is not None:
+        training_arg_kwargs["use_mps_device"] = config.use_mps_device
+
     if eval_steps is not None:
         training_arg_kwargs["eval_steps"] = eval_steps
     if save_steps is not None:
@@ -436,6 +484,9 @@ def main() -> None:
         data_collator=data_collator,
         compute_metrics=compute_metrics,
     )
+
+    if config.gradient_checkpointing:
+        model.gradient_checkpointing_enable()
 
     train_result = trainer.train(resume_from_checkpoint=config.resume_from_checkpoint)
     trainer.save_model()
