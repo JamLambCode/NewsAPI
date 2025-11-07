@@ -6,11 +6,12 @@ import asyncio
 from typing import AsyncIterator
 
 import pytest
+import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from src.app.config import Settings, get_settings
+from src.app.config import Settings
+from src.app.deps import get_db_session
 from src.app.main import app
 from src.app.storage.models import Base
 
@@ -23,7 +24,7 @@ def event_loop():
     loop.close()
 
 
-@pytest.fixture(scope="function")
+@pytest_asyncio.fixture(scope="function")
 async def test_db_engine():
     """Create an in-memory SQLite database for testing."""
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
@@ -33,14 +34,10 @@ async def test_db_engine():
     await engine.dispose()
 
 
-@pytest.fixture(scope="function")
-async def test_db_session(test_db_engine) -> AsyncIterator[AsyncSession]:
-    """Provide a database session for testing."""
-    async_session_factory = sessionmaker(
-        test_db_engine, class_=AsyncSession, expire_on_commit=False
-    )
-    async with async_session_factory() as session:
-        yield session
+@pytest_asyncio.fixture(scope="function")
+async def test_db_sessionmaker(test_db_engine):
+    """Provide a session factory bound to the test engine."""
+    return async_sessionmaker(test_db_engine, class_=AsyncSession, expire_on_commit=False)
 
 
 @pytest.fixture(scope="function")
@@ -56,9 +53,16 @@ def test_settings() -> Settings:
     )
 
 
-@pytest.fixture(scope="function")
-async def test_client() -> AsyncIterator[AsyncClient]:
+@pytest_asyncio.fixture(scope="function")
+async def test_client(test_db_sessionmaker) -> AsyncIterator[AsyncClient]:
     """Provide an async HTTP client for testing the FastAPI app."""
+
+    async def override_db_session() -> AsyncIterator[AsyncSession]:
+        async with test_db_sessionmaker() as session:
+            yield session
+
+    app.dependency_overrides[get_db_session] = override_db_session
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         yield client
+    app.dependency_overrides.pop(get_db_session, None)
 

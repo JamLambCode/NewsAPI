@@ -5,9 +5,15 @@ from __future__ import annotations
 import unicodedata
 from dataclasses import dataclass
 from typing import Iterable, List
+from pathlib import Path
 
 
 ALLOWED_ENTITY_TYPES = {"PERSON", "ORGANIZATION", "LOCATION", "EVENT", "DATE"}
+ENTITY_GROUP_MAP = {
+    "PER": "PERSON",
+    "ORG": "ORGANIZATION",
+    "LOC": "LOCATION",
+}
 
 
 @dataclass(slots=True)
@@ -23,8 +29,18 @@ class EntitySpan:
 class DeterministicNER:
     """Wrapper around a Hugging Face pipeline for deterministic NER."""
 
-    def __init__(self, model_name: str = "numind/NuNER-multilingual-v0.1") -> None:
-        self.model_name = model_name
+    def __init__(self, model_name: str | None = None) -> None:
+        if model_name is None:
+            local_model_dir = (
+                Path(__file__).resolve().parents[3] / "models" / "ner_finetuned"
+            )
+            self.model_name = (
+                str(local_model_dir)
+                if local_model_dir.exists()
+                else "numind/NuNER-multilingual-v0.1"
+            )
+        else:
+            self.model_name = model_name
         self._pipeline = None
 
     def _load_pipeline(self):  # pragma: no cover - lazy load
@@ -46,11 +62,15 @@ class DeterministicNER:
         raw_spans = self._pipeline(text)
         spans: List[EntitySpan] = []
         for span in raw_spans:
-            label = span.get("entity_group", "")
+            raw_label = span.get("entity_group", "")
+            label = ENTITY_GROUP_MAP.get(raw_label, raw_label)
             if label in ALLOWED_ENTITY_TYPES:
+                surface = span.get("word", "")
+                surface = surface.replace("##", "")
+                surface = " ".join(surface.split())
                 spans.append(
                     EntitySpan(
-                        text=span.get("word", "").strip(),
+                        text=surface,
                         label=label,
                         start=int(span.get("start", 0)),
                         end=int(span.get("end", 0)),

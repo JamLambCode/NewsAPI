@@ -12,6 +12,43 @@ Holocron ingests French news headlines, extracts entities through deterministic 
 - Hybrid ingestion model with on-demand processing and scheduled RSS polling
 - SQLite by default with an easy path to Postgres
 
+## Architecture & Approach
+
+- **Entity & relationship extraction**  
+  I fine-tuned `numind/NuNER-multilingual-v0.1` on WikiANN-FR (PER/ORG/LOC). With gradient accumulation, checkpointing, and MPS-friendly settings, the best checkpoint reached an overall F1 of **0.91** (PER 0.93, LOC 0.93, ORG 0.84). DATE spans come from `dateparser.search_dates`, EVENT spans from deterministic regex heuristics, and I translate surfaces with MarianMT so French and English outputs stay in sync. Relationship typing runs through an Ollama-hosted LLaMA 3 model that is clipped to the labels in `relationships.yaml`; if the LLM abstains, I fall back to simple keyword heuristics so `/entities` always returns actionable edges.
+
+- **Challenges encountered & fixes**  
+  1. *NuNER is an encoder, not a classifier.* I wrote a full training pipeline (`scripts/train_ner.py`) with gradient accumulation and checkpointing so it fits in M1 GPU memory.  
+  2. *Large checkpoints blew past GitHub’s 2 GB cap.* I pruned intermediate Hugging Face checkpoints and used Git LFS so only the final `model.safetensors` lives in `models/ner_finetuned/`.  
+  3. *`dateparser.search_dates` lacks offsets.* I reconstruct spans manually before storing DATE entities.  
+  4. *LLM latency & cost.* I reduce candidate pairs to schema-compatible ones and added a deterministic heuristic fallback so ingestion never stalls if the LLM is slow or offline.
+
+- **Architecture rationale & tech choices**  
+  - FastAPI + async SQLAlchemy let the on-demand endpoint and APScheduler poller share the same async session layer.  
+  - The persistence model (`articles`, `entities`, `relationships`, `article_contents`) is normalized and ready for expansion—adding, say, `coreferences` or `topics` is just another table keyed by `article_id`. Switching to Postgres only requires updating `DATABASE_URL`.  
+  - I split the code into `ingest`, `nlp`, `llm`, and `analytics` modules, which makes it easy to swap MarianMT, plug in a different LLM provider, or bolt on new analytics like the “Déjà-vu Detector.”  
+  - Ollama keeps relationship classification local by default; optional OpenAI/OpenRouter fallbacks kick in when API keys are provided.
+
+- **Trade-offs & future work**  
+  I optimized for an end-to-end demo over exhaustive accuracy: RSS summaries are easier to ingest quickly but lose context versus full-text scraping. SQLite keeps setup simple, though I’d migrate to Postgres plus pgvector or a graph DB for production analytics. If I had more time I’d merge subword spans (e.g., “Somme … énergie”), add confidence scores, expand to France 24/RFI feeds, and build a storyline summarizer on top of the relationship graph.
+
+- **Example data**  
+  After running `scripts/run_ingest_once.py --feed fr/lemonde --limit 5`, `/entities` surfaces results like:
+  ```json
+  {
+    "entities": [
+      {"type": "PERSON", "text": "Kari Lake", "text_en": "Kari Lake"},
+      {"type": "ORGANIZATION", "text": "Agency for Global Media", "text_en": "Agency for Global Media"},
+      {"type": "LOCATION", "text": "East Northport", "text_en": "East Northport"}
+    ],
+    "relationships": [
+      {"rel_type": "works_for", "source": "Kari Lake", "target": "Agency for Global Media"},
+      {"rel_type": "met_with", "source": "Viktor Orban", "target": "Volodymyr Zelensky"},
+      {"rel_type": "located_in", "source": "Maison Blanche", "target": "Europe"}
+    ]
+  }
+  ```
+
 ## Getting Started
 
 ### Prerequisites

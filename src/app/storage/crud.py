@@ -4,11 +4,11 @@ from collections.abc import Iterable
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from .models import Article, Entity, Relationship
+from .models import Article, ArticleContent, Entity, Relationship
 
 
 async def get_article_by_url(session: AsyncSession, url: str) -> Optional[Article]:
@@ -117,6 +117,48 @@ async def replace_relationships(
         created.append(rel)
     await session.flush()
     return created
+
+
+async def upsert_article_content(
+    session: AsyncSession,
+    article: Article,
+    *,
+    text_fr: str | None,
+) -> ArticleContent | None:
+    """Persist the French text body for downstream analytics."""
+
+    if not text_fr:
+        return None
+    result = await session.execute(
+        select(ArticleContent).where(ArticleContent.article_id == article.id)
+    )
+    record = result.scalar_one_or_none()
+    if record:
+        record.text_fr = text_fr
+        return record
+    record = ArticleContent(article_id=article.id, text_fr=text_fr)
+    session.add(record)
+    await session.flush()
+    return record
+
+
+async def list_article_contents(
+    session: AsyncSession,
+    *,
+    min_chars: int = 100,
+    limit: int = 200,
+) -> list[tuple[Article, ArticleContent]]:
+    """Return recent articles with stored text bodies."""
+
+    stmt = (
+        select(Article, ArticleContent)
+        .join(ArticleContent, ArticleContent.article_id == Article.id)
+        .where(func.length(ArticleContent.text_fr) >= min_chars)
+        .order_by(Article.ingested_at.desc())
+        .limit(limit)
+    )
+    result = await session.execute(stmt)
+    return [(row.Article, row.ArticleContent) for row in result.all()]
 
 
 

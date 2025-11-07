@@ -31,6 +31,28 @@ class Article(Base):
     relationships: Mapped[List["Relationship"]] = relationship(
         "Relationship", back_populates="article"
     )
+    content: Mapped["ArticleContent | None"] = relationship(
+        "ArticleContent", back_populates="article", cascade="all, delete-orphan", uselist=False
+    )
+...
+
+class ArticleContent(Base):
+    """Stored article text payloads."""
+
+    __tablename__ = "article_contents"
+
+    article_id: Mapped[int] = mapped_column(
+        ForeignKey("articles.id", ondelete="CASCADE"), primary_key=True
+    )
+    text_fr: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+    article: Mapped[Article] = relationship("Article", back_populates="content")
 
 
 class Entity(Base):

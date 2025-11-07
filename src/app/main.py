@@ -11,14 +11,18 @@ from fastapi import Depends, FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .analytics.dejavu import ArticleMeta, collect_reused_quotes
 from .config import get_settings
 from .deps import get_db_session
 from .ingest.rss import FEED_LANG_MAP, RSSClient
 from .llm.relationships import RelationshipPrompt, build_classifier_from_settings
+from .llm.patterns import PatternSummarizer
 from .nlp.ner import DeterministicNER, EntitySpan, normalize_text
 from .nlp.translate import Translator
 from .schemas import (
     Article as ArticleSchema,
+    DejaVuCluster as DejaVuClusterSchema,
+    DejaVuOccurrence as DejaVuOccurrenceSchema,
     EntitiesRequest,
     EntitiesResponse,
     Entity as EntitySchema,
@@ -57,6 +61,12 @@ logger.info("Initializing NLP and LLM components")
 ner = DeterministicNER()
 translator = Translator()
 classifier = build_classifier_from_settings(settings)
+summarizer = PatternSummarizer(
+    ollama_model=settings.ollama_model,
+    ollama_base_url=settings.ollama_base_url,
+    openai_model=settings.openai_model,
+    openai_key=settings.openai_api_key,
+)
 scheduler: Optional[AsyncIOScheduler] = None
 
 
@@ -194,6 +204,64 @@ async def graph(session: AsyncSession = Depends(get_db_session)) -> GraphRespons
     return GraphResponse(nodes=list(nodes.values()), edges=edges)
 
 
+@app.get(
+    "/dejavu",
+    response_model=list[DejaVuClusterSchema],
+    tags=["analytics"],
+)
+async def deja_vu_detector(
+    session: AsyncSession = Depends(get_db_session),
+    limit: int = Query(5, ge=1, le=20),
+    shingle_size: int = Query(12, ge=5, le=20),
+    min_hits: int = Query(3, ge=2, le=10),
+    distinct_feeds: bool = Query(True, description="Require snippets to appear across different feeds"),
+) -> list[DejaVuClusterSchema]:
+    """Identify repeated snippets across outlets and summarize the narrative."""
+
+    records = await crud.list_article_contents(session, min_chars=shingle_size * 4, limit=500)
+    if not records:
+        return []
+
+    articles = [
+        ArticleMeta(
+            article_id=article.id,
+            feed=article.feed,
+            title=article.title,
+            text_fr=content.text_fr,
+        )
+        for article, content in records
+    ]
+    clusters = collect_reused_quotes(
+        articles,
+        shingle_size=shingle_size,
+        min_hits=min_hits,
+        require_distinct_feeds=distinct_feeds,
+    )
+    top_clusters = clusters[:limit]
+    response: list[DejaVuClusterSchema] = []
+    for cluster in top_clusters:
+        summary = await summarizer.summarize(cluster.snippet, [occ.feed for occ in cluster.occurrences])
+        response.append(
+            DejaVuClusterSchema(
+                fingerprint=cluster.fingerprint,
+                summary=summary,
+                snippet=cluster.snippet,
+                count=cluster.count,
+                outlets=sorted(cluster.feeds),
+                occurrences=[
+                    DejaVuOccurrenceSchema(
+                        article_id=occ.article_id,
+                        feed=occ.feed,
+                        title=occ.title,
+                        snippet=occ.snippet,
+                    )
+                    for occ in cluster.occurrences
+                ],
+            )
+        )
+    return response
+
+
 async def process_payload(session: AsyncSession, payload: EntitiesRequest) -> EntitiesResponse:
     """Pipeline workflow invoked by API and scheduler."""
 
@@ -208,6 +276,8 @@ async def process_payload(session: AsyncSession, payload: EntitiesRequest) -> En
         title=payload.title,
         url=str(payload.url) if payload.url else None,
     )
+
+    await crud.upsert_article_content(session, article, text_fr=context_text)
     logger.debug("Article created/retrieved: id=%s", article.id)
 
     logger.debug("Running NER on %d chars of text", len(context_text))

@@ -83,4 +83,20 @@ class GraphResponse(BaseModel):
     edges: List[GraphEdge]
 
 
+class DejaVuOccurrence(BaseModel):
+    article_id: int
+    feed: str
+    title: str
+    snippet: str
+
+
+class DejaVuCluster(BaseModel):
+    fingerprint: str
+    summary: str
+    snippet: str
+    count: int
+    outlets: List[str]
+    occurrences: List[DejaVuOccurrence]
+
+
 
