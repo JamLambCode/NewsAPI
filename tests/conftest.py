@@ -1,4 +1,4 @@
-"""Pytest fixtures for Holocron tests."""
+"""Pytest fixtures for News Intelligence API tests."""
 
 from __future__ import annotations
 

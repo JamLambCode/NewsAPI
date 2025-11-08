@@ -46,7 +46,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("holocron")
 
-app = FastAPI(title="Holocron News Intelligence API", version="0.1.0")
+app = FastAPI(title="News Intelligence API", version="0.1.0")
 
 # Optional CORS support when serving a frontend locally.
 if settings.app_env == "development":

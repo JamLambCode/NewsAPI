@@ -1,2 +1,2 @@
-"""Holocron utility scripts."""
+"""Utility scripts for the News Intelligence API."""
 

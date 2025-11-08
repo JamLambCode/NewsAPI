@@ -1,4 +1,4 @@
-"""Smoke tests for the Holocron API."""
+"""Smoke tests for the News Intelligence API."""
 
 from __future__ import annotations
 

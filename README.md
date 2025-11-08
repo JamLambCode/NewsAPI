@@ -1,6 +1,6 @@
-# Holocron News Intelligence API
+# News Intelligence API
 
-Holocron ingests French news headlines, extracts entities through deterministic NLP, and uses tightly controlled LLM reasoning to classify relationships between entities. The API exposes an on-demand `/entities` endpoint alongside browsable entity, relationship, and article listings.
+This service ingests French news headlines, extracts entities through deterministic NLP, and uses tightly controlled LLM reasoning to classify relationships between entities. The API exposes an on-demand `/entities` endpoint alongside browsable entity, relationship, and article listings.
 
 ## Features
 
@@ -17,16 +17,18 @@ Holocron ingests French news headlines, extracts entities through deterministic 
 - **Entity & relationship extraction**  
   I fine-tuned `numind/NuNER-multilingual-v0.1` on WikiANN-FR (PER/ORG/LOC). With gradient accumulation, checkpointing, and MPS-friendly settings, the best checkpoint reached an overall F1 of **0.91** (PER 0.93, LOC 0.93, ORG 0.84). DATE spans come from `dateparser.search_dates`, EVENT spans from deterministic regex heuristics, and I translate surfaces with MarianMT so French and English outputs stay in sync. Relationship typing runs through an Ollama-hosted LLaMA 3 model that is clipped to the labels in `relationships.yaml`; if the LLM abstains, I fall back to simple keyword heuristics so `/entities` always returns actionable edges.
 
-- **Challenges encountered & fixes**  
-  1. *NuNER is an encoder, not a classifier.* I wrote a full training pipeline (`scripts/train_ner.py`) with gradient accumulation and checkpointing so it fits in M1 GPU memory.  
-  2. *Large checkpoints blew past GitHub’s 2 GB cap.* I pruned intermediate Hugging Face checkpoints and used Git LFS so only the final `model.safetensors` lives in `models/ner_finetuned/`.  
-  3. *`dateparser.search_dates` lacks offsets.* I reconstruct spans manually before storing DATE entities.  
-  4. *LLM latency & cost.* I reduce candidate pairs to schema-compatible ones and added a deterministic heuristic fallback so ingestion never stalls if the LLM is slow or offline.
+- **Challenges encountered & fixes**
 
-- **Architecture rationale & tech choices**  
-  - FastAPI + async SQLAlchemy let the on-demand endpoint and APScheduler poller share the same async session layer.  
-  - The persistence model (`articles`, `entities`, `relationships`, `article_contents`) is normalized and ready for expansion—adding, say, `coreferences` or `topics` is just another table keyed by `article_id`. Switching to Postgres only requires updating `DATABASE_URL`.  
-  - I split the code into `ingest`, `nlp`, `llm`, and `analytics` modules, which makes it easy to swap MarianMT, plug in a different LLM provider, or bolt on new analytics like the “Déjà-vu Detector.”  
+  1. _NuNER is an encoder, not a classifier._ I wrote a full training pipeline (`scripts/train_ner.py`) with gradient accumulation and checkpointing so it fits in M1 GPU memory.
+  2. _Large checkpoints blew past GitHub’s 2 GB cap._ I pruned intermediate Hugging Face checkpoints and used Git LFS so only the final `model.safetensors` lives in `models/ner_finetuned/`.
+  3. _`dateparser.search_dates` lacks offsets._ I reconstruct spans manually before storing DATE entities.
+  4. _LLM latency & cost._ I reduce candidate pairs to schema-compatible ones and added a deterministic heuristic fallback so ingestion never stalls if the LLM is slow or offline.
+
+- **Architecture rationale & tech choices**
+
+  - FastAPI + async SQLAlchemy let the on-demand endpoint and APScheduler poller share the same async session layer.
+  - The persistence model (`articles`, `entities`, `relationships`, `article_contents`) is normalized and ready for expansion—adding, say, `coreferences` or `topics` is just another table keyed by `article_id`. Switching to Postgres only requires updating `DATABASE_URL`.
+  - I split the code into `ingest`, `nlp`, `llm`, and `analytics` modules, which makes it easy to swap MarianMT, plug in a different LLM provider, or bolt on new analytics like the “Déjà-vu Detector.”
   - Ollama keeps relationship classification local by default; optional OpenAI/OpenRouter fallbacks kick in when API keys are provided.
 
 - **Trade-offs & future work**  
@@ -37,14 +39,34 @@ Holocron ingests French news headlines, extracts entities through deterministic 
   ```json
   {
     "entities": [
-      {"type": "PERSON", "text": "Kari Lake", "text_en": "Kari Lake"},
-      {"type": "ORGANIZATION", "text": "Agency for Global Media", "text_en": "Agency for Global Media"},
-      {"type": "LOCATION", "text": "East Northport", "text_en": "East Northport"}
+      { "type": "PERSON", "text": "Kari Lake", "text_en": "Kari Lake" },
+      {
+        "type": "ORGANIZATION",
+        "text": "Agency for Global Media",
+        "text_en": "Agency for Global Media"
+      },
+      {
+        "type": "LOCATION",
+        "text": "East Northport",
+        "text_en": "East Northport"
+      }
     ],
     "relationships": [
-      {"rel_type": "works_for", "source": "Kari Lake", "target": "Agency for Global Media"},
-      {"rel_type": "met_with", "source": "Viktor Orban", "target": "Volodymyr Zelensky"},
-      {"rel_type": "located_in", "source": "Maison Blanche", "target": "Europe"}
+      {
+        "rel_type": "works_for",
+        "source": "Kari Lake",
+        "target": "Agency for Global Media"
+      },
+      {
+        "rel_type": "met_with",
+        "source": "Viktor Orban",
+        "target": "Volodymyr Zelensky"
+      },
+      {
+        "rel_type": "located_in",
+        "source": "Maison Blanche",
+        "target": "Europe"
+      }
     ]
   }
   ```
@@ -60,19 +82,26 @@ Holocron ingests French news headlines, extracts entities through deterministic 
 
 ### Quick Start
 
-0. **Pull LFS artifacts**\n   ```bash\n   git lfs install\n   git lfs pull\n   ```\n
+0. **Pull LFS artifacts**
+
+   ```bash
+   git lfs install
+   git lfs pull
+   ```
 1. **Install dependencies**
+
    ```bash
    # Using uv (recommended)
    uv venv && source .venv/bin/activate
    uv pip install -e '.[dev]'
-   
+
    # Or using pip
    python -m venv .venv && source .venv/bin/activate
    pip install -e '.[dev]'
    ```
 
 2. **Set up Ollama**
+
    ```bash
    # Install from https://ollama.com/download, then:
    ollama pull llama3
@@ -80,31 +109,35 @@ Holocron ingests French news headlines, extracts entities through deterministic 
    ```
 
 3. **Configure environment**
+
    ```bash
    cp .env.example .env
    # Edit .env if needed (defaults work for local dev)
    ```
 
 4. **Initialize database**
+
    ```bash
    python -m src.app.storage.db --init
    ```
 
 5. **Start the API**
+
    ```bash
    uvicorn src.app.main:app --reload --port 8080
    ```
 
 6. **Test with sample data**
+
    ```bash
    # Ingest a few headlines from Le Monde
    python scripts/run_ingest_once.py --feed fr/lemonde --limit 3
-   
+
    # Or test the on-demand endpoint
    curl -X POST http://localhost:8080/entities \
      -H "Content-Type: application/json" \
      -d '{"title":"Emmanuel Macron rencontre Olaf Scholz à Paris","feed":"fr/lemonde"}'
-   
+
    # Browse the data
    curl http://localhost:8080/entities
    curl http://localhost:8080/relationships
@@ -127,16 +160,28 @@ Sample response excerpt:
 ```json
 {
   "entities": [
-    {"type": "PERSON", "text": "Emmanuel Macron"},
-    {"type": "PERSON", "text": "Ursula von der Leyen"},
-    {"type": "LOCATION", "text": "Bruxelles"},
-    {"type": "DATE", "text": "2 juin 2024"},
-    {"type": "EVENT", "text": "Sommet européen de l'énergie"}
+    { "type": "PERSON", "text": "Emmanuel Macron" },
+    { "type": "PERSON", "text": "Ursula von der Leyen" },
+    { "type": "LOCATION", "text": "Bruxelles" },
+    { "type": "DATE", "text": "2 juin 2024" },
+    { "type": "EVENT", "text": "Sommet européen de l'énergie" }
   ],
   "relationships": [
-    {"rel_type": "met_with", "source": "Emmanuel Macron", "target": "Ursula von der Leyen"},
-    {"rel_type": "located_in", "source": "Sommet européen de l'énergie", "target": "Bruxelles"},
-    {"rel_type": "announced", "source": "Sommet européen de l'énergie", "target": "Sommet européen de l'énergie"}
+    {
+      "rel_type": "met_with",
+      "source": "Emmanuel Macron",
+      "target": "Ursula von der Leyen"
+    },
+    {
+      "rel_type": "located_in",
+      "source": "Sommet européen de l'énergie",
+      "target": "Bruxelles"
+    },
+    {
+      "rel_type": "announced",
+      "source": "Sommet européen de l'énergie",
+      "target": "Sommet européen de l'énergie"
+    }
   ]
 }
 ```
@@ -185,7 +230,7 @@ Responses echo the original payload, include normalized/translated entity string
 ## Project Structure
 
 ```text
-holocron-news-intel/
+NewsAPI/
 ├── pyproject.toml
 ├── .env.example
 ├── README.md
@@ -252,12 +297,12 @@ Build and run with Docker:
 
 ```bash
 # Build the image
-docker build -t holocron-news-intel .
+docker build -t news-intelligence-api .
 
 # Run with SQLite
 docker run -p 8080:8080 \
   -e OLLAMA_BASE_URL=http://host.docker.internal:11434 \
-  holocron-news-intel
+  news-intelligence-api
 
 # Or use docker-compose for full stack (Postgres + Ollama)
 docker-compose up
@@ -271,5 +316,3 @@ See `TODO.md` for the full list. Key items:
 - Expand relationship schema via bootstrap analysis
 - Add retry logic for RSS fetching
 - Implement graph endpoint pagination
-
-

@@ -46,7 +46,7 @@ async def get_connection() -> AsyncIterator[AsyncEngine]:
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Holocron DB utilities")
+    parser = argparse.ArgumentParser(description="News Intelligence DB utilities")
     parser.add_argument("--init", action="store_true", help="Create database tables")
     parser.add_argument("--drop", action="store_true", help="Drop database tables")
     return parser.parse_args()

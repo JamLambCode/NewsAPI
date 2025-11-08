@@ -1,3 +1,3 @@
-"""Holocron News Intelligence application package."""
+"""News Intelligence API application package."""
 
 

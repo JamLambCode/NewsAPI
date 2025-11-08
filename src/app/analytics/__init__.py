@@ -1,3 +1,3 @@
-"""Analytics utilities for Holocron."""
+"""Analytics utilities for the News Intelligence API."""
 
 

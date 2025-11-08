@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
-    {name = "Holocron", email = "dev@holocron.local"}
+    {name = "News Intelligence Team", email = "dev@example.com"}
 ]
 dependencies = [
     "fastapi~=0.115",

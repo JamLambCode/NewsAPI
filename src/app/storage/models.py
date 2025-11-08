@@ -1,4 +1,4 @@
-"""SQLAlchemy models for Holocron."""
+"""SQLAlchemy models for the News Intelligence API."""
 
 from __future__ import annotations
 

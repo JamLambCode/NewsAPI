@@ -1,2 +1,2 @@
-"""Holocron test suite."""
+"""Test suite for the News Intelligence API."""
 

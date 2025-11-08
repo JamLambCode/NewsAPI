@@ -1,4 +1,4 @@
-# Multi-stage build for Holocron News Intelligence API
+# Multi-stage build for the News Intelligence API
 FROM python:3.11-slim AS builder
 
 # Install uv for faster package management

@@ -1,2 +1,2 @@
-"""Holocron source package."""
+"""News Intelligence API source package."""
 
